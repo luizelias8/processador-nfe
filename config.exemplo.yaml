@@ -1,0 +1,49 @@
+# Documento 1: Configurações do Processador
+---
+processador:
+  # Pasta onde estão os arquivos XML a serem processados
+  pasta_xml: ./xml_nfe
+
+  # Pasta onde serão movidos os arquivos processados com sucesso
+  pasta_erros: ./processados
+
+  # Pasta onde serão movidos os arquivos com erro no processamento
+  pasta_erros: ./erros
+
+  # Caminho para o arquivo do banco de dados SQLite
+  banco_dados: ./nfe_database.db
+
+# Documento 2: Configurações de Logging
+---
+logging:
+  # Nível de logging (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  nivel: INFO
+
+  # Formato da mensagem de log
+  formato: '%(asctime)s | %(levelname)8s | %(message)s'
+
+  # Formato da data/hora
+  formato_data: '%Y-%m-%d %H:%M:%S'
+
+  # Pasta onde serão salvos os arquivos de log
+  pasta_log: ./logs
+
+  # Nome do arquivo de log
+  nome_arquivo: processador_nfe.log
+
+  # Configurações de rotação de log
+  rotacao:
+    # Tipo de rotação:
+    # 'S' - segundos
+    # 'M' - minutos
+    # 'H' - horas
+    # 'D' - dias
+    # 'W0'-'W6' - dia da semana (0=segunda, 6=domingo)
+    # 'midnight' - meia-noite
+    when: D
+
+    # Intervalo para rotação (ex: 1 = a cada 1 dia)
+    interval: 1
+
+    # Número de arquivos de backup para manter
+    backup_count: 7
