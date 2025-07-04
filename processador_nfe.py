@@ -35,7 +35,8 @@ def carregar_configuracoes(arquivo_config=None):
             'pasta_xml': './xml_nfe',
             'pasta_processados': './processados',
             'pasta_erros': './erros',
-            'banco_dados': './nfe_database.db'
+            'banco_dados': './nfe_database.db',
+            'busca_recursiva': True
         },
         'logging': {
             'nivel': 'INFO',
@@ -171,6 +172,9 @@ class ProcessadorNFe(FileSystemEventHandler):
         self.pasta_erros = (self.base_dir / self.config['pasta_erros']).resolve()
         self.banco_dados = (self.base_dir / self.config['banco_dados']).resolve()
 
+        # Configuração de busca recursiva
+        self.busca_recursiva = self.config.get('busca_recursiva', True)
+
         # Criar pastas necessárias
         self.criar_pastas()
 
@@ -182,6 +186,7 @@ class ProcessadorNFe(FileSystemEventHandler):
         logging.info(f'Pasta processados: {self.pasta_processados}')
         logging.info(f'Pasta erros: {self.pasta_erros}')
         logging.info(f'Banco de dados: {self.banco_dados}')
+        logging.info(f'Busca recursiva: {"Ativada" if self.busca_recursiva else "Desativada"}')
 
     def criar_pastas(self):
         """Cria as pastas necessárias se não existirem"""
@@ -217,6 +222,7 @@ class ProcessadorNFe(FileSystemEventHandler):
                     valor_pis REAL,
                     valor_cofins REAL,
                     arquivo_xml TEXT,
+                    caminho_original TEXT,
                     data_processamento DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -342,14 +348,41 @@ class ProcessadorNFe(FileSystemEventHandler):
         except:
             return None
 
-    def salvar_no_banco(self, cabecalho, itens, nome_arquivo):
+    def gerar_nome_unico(self, arquivo_original, pasta_destino):
+        """
+        Gera um nome único para o arquivo, evitando conflitos.
+
+        Args:
+            arquivo_original (Path): Arquivo original
+            pasta_destino (Path): Pasta de destino
+
+        Returns:
+            Path: Caminho único para o arquivo
+        """
+        nome_base = arquivo_original.stem
+        extensao = arquivo_original.suffix
+        contador = 1
+
+        # Começar com o nome original
+        nome_destino = pasta_destino / arquivo_original.name
+
+        # Se já existe, adicionar contador
+        while nome_destino.exists():
+            novo_nome = f'{nome_base}_{contador:03d}-{extensao}'
+            nome_destino = pasta_destino / novo_nome
+            contador += 1
+
+        return nome_destino
+
+    def salvar_no_banco(self, cabecalho, itens, nome_arquivo, caminho_original):
         """Salva os dados da NFe no banco de dados"""
         try:
             conn = sqlite3.connect(str(self.banco_dados))
             cursor = conn.cursor()
 
-            # Adicionar nome do arquivo ao cabeçalho
+            # Adicionar informações do arquivo ao cabeçalho
             cabecalho['arquivo_xml'] = nome_arquivo
+            cabecalho['caminho_original'] = str(caminho_original)
 
             # Inserir cabeçalho
             cursor.execute("""
@@ -357,16 +390,16 @@ class ProcessadorNFe(FileSystemEventHandler):
                     chave_acesso, numero_nf, serie, data_emissao,
                     data_saida_entrada, tipo_operacao, cnpj_emitente, nome_emitente,
                     cnpj_destinatario, nome_destinatario, valor_total, valor_icms,
-                    valor_pis, valor_cofins, arquivo_xml
+                    valor_pis, valor_cofins, arquivo_xml, caminho_original
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
 
             """, (
                 cabecalho['chave_acesso'], cabecalho['numero_nf'], cabecalho['serie'], cabecalho['data_emissao'],
                 cabecalho['data_saida_entrada'], cabecalho['tipo_operacao'], cabecalho['cnpj_emitente'], cabecalho['nome_emitente'],
                 cabecalho['cnpj_destinatario'], cabecalho['nome_destinatario'], cabecalho['valor_total'], cabecalho['valor_icms'],
-                cabecalho['valor_pis'], cabecalho['valor_cofins'], cabecalho['arquivo_xml']
+                cabecalho['valor_pis'], cabecalho['valor_cofins'], cabecalho['arquivo_xml'], cabecalho['caminho_original']
             ))
 
             # Remover itens existentes para esta chave de acesso
@@ -400,7 +433,13 @@ class ProcessadorNFe(FileSystemEventHandler):
     def processar_xml(self, arquivo_xml):
         """Processa um arquivo XML de NFe"""
         try:
-            logging.info(f'Processando arquivo: {arquivo_xml.name}')
+            # Obter caminho relativo à pasta base de XML para logging
+            try:
+                caminho_relativo = arquivo_xml.relative_to(self.pasta_xml)
+            except ValueError:
+                caminho_relativo = arquivo_xml.name
+
+            logging.info(f'Processando arquivo: {caminho_relativo}')
 
             # Ler e processar XML
             with open(arquivo_xml, 'r', encoding='utf-8') as f:
@@ -413,20 +452,25 @@ class ProcessadorNFe(FileSystemEventHandler):
             cabecalho, itens = self.extrair_dados_nfe(xml_dict)
 
             # Salvar no banco
-            self.salvar_no_banco(cabecalho, itens, arquivo_xml.name)
+            self.salvar_no_banco(cabecalho, itens, arquivo_xml.name, caminho_relativo)
 
-            # Mover arquivo para pasta de processados
-            destino = self.pasta_processados / arquivo_xml.name
+            # Mover arquivo para pasta de processados com nome único
+            destino = self.gerar_nome_unico(arquivo_xml, self.pasta_processados)
             shutil.move(str(arquivo_xml), str(destino))
 
             logging.info(f'Arquivo processado com sucesso: {arquivo_xml.name}')
 
         except Exception as e:
-            logging.error(f'Erro ao processar {arquivo_xml.name}: {e}')
+            try:
+                caminho_relativo = arquivo_xml.relative_to(self.pasta_xml)
+            except ValueError:
+                caminho_relativo = arquivo_xml.name
+
+            logging.error(f'Erro ao processar {caminho_relativo}: {e}')
 
             # Mover arquivo para pasta de erros
             try:
-                destino_erro = self.pasta_erros / arquivo_xml.name
+                destino_erro = self.gerar_nome_unico(arquivo_xml, self.pasta_erros)
                 shutil.move(str(arquivo_xml), str(destino_erro))
                 logging.info(f'Arquivo movido para pasta de erros: {arquivo_xml.name}')
             except Exception as e2:
@@ -442,6 +486,13 @@ class ProcessadorNFe(FileSystemEventHandler):
                 logging.debug(f'Arquivo ignorado (não é XML): {arquivo.name}')
                 return
 
+            # Verificar se o arquivo está dentro da pasta monitorada
+            try:
+                arquivo.relative_to(self.pasta_xml)
+            except ValueError:
+                logging.debug(f'Arquivo fora da pasta monitorada: {arquivo}')
+                return
+
             # Aguardar um pouco para garantir que o arquivo foi completamente copiado
             time.sleep(1)
 
@@ -450,7 +501,12 @@ class ProcessadorNFe(FileSystemEventHandler):
                 logging.debug(f'Arquivo não existe mais: {arquivo.name}')
                 return
 
-            logging.info(f'Novo arquivo XML detectado: {arquivo.name}')
+            try:
+                caminho_relativo = arquivo.relative_to(self.pasta_xml)
+                logging.info(f'Novo arquivo XML detectado: {caminho_relativo}')
+            except ValueError:
+                logging.info(f'Novo arquivo XML detectado: {arquivo.name}')
+
             self.processar_xml(arquivo)
 
     def processar_arquivos_existentes(self):
@@ -458,9 +514,22 @@ class ProcessadorNFe(FileSystemEventHandler):
         logging.info('Processando arquivos XML existentes...')
         arquivos_processados = 0
 
-        for arquivo in self.pasta_xml.glob('*.xml'):
+        # Escolher método de busca baseado na configuração
+        if self.busca_recursiva:
+            # Busca recursiva em todas as subpastas
+            arquivos_xml = list(self.pasta_xml.rglob('*.xml'))
+        else:
+            # Busca apenas na pasta raiz
+            arquivos_xml = list(self.pasta_xml.glob('*xml'))
+
+        for arquivo in arquivos_xml:
             if arquivo.is_file():
-                logging.info(f'Processando arquivo existente: {arquivo.name}')
+                try:
+                    caminho_relativo = arquivo.relative_to(self.pasta_xml)
+                    logging.info(f'Processando arquivo existente: {caminho_relativo}')
+                except ValueError:
+                    logging.info(f'Processando arquivo existente: {arquivo.name}')
+
                 self.processar_xml(arquivo)
                 arquivos_processados += 1
 
@@ -497,7 +566,7 @@ def main():
         # 1. A instância da sua classe personalizada (que herdou de FileSystemEventHandler), que define como reagir aos eventos de arquivos (criação, modificação, etc.).
         # 2. O diretório que deseja monitorar.
         # Assim, o Observer vai monitorar esse diretório e chamar os métodos da sua classe (on_created, on_modified, etc.) sempre que ocorrerem eventos de sistema de arquivos.
-        observer.schedule(processador, str(processador.pasta_xml), recursive=False)
+        observer.schedule(processador, str(processador.pasta_xml), recursive=True)
 
         observer.start()
 

@@ -13,6 +13,9 @@ processador:
   # Caminho para o arquivo do banco de dados SQLite
   banco_dados: ./nfe_database.db
 
+  # Ativar busca recursiva em subpastas (true/false)
+  busca_recursiva: true
+
 # Documento 2: Configurações de Logging
 ---
 logging:
