@@ -5,7 +5,7 @@ processador:
   pasta_xml: ./xml_nfe
 
   # Pasta onde serão movidos os arquivos processados com sucesso
-  pasta_erros: ./processados
+  pasta_processados: ./processados
 
   # Pasta onde serão movidos os arquivos com erro no processamento
   pasta_erros: ./erros
